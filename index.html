@@ -520,6 +520,7 @@
       ["Default labels", "team_a is the home team when home/away is available."],
       ["Start possession", "Uses the jump-ball tip receiver, first live offensive action, free throws after defensive fouls, or the next post-boundary action."],
       ["End possession", "Ends on made field goal, turnover, final possession-ending free throw, defensive rebound, or period end."],
+      ["Output sheets", "Creates one possession sheet per source game sheet, plus Team Map and Method."],
       ["Points", "Uses scoreHome and scoreAway deltas mapped to the possession offense."],
       ["Grouped rows", "Rows sharing period and actionNumber are treated as one event cluster for steals, blocks, and annotations."]
     ];
@@ -558,12 +559,17 @@
     }
 
     function clockSeconds(clock) {
+      const value = clockValue(clock);
+      return value == null ? null : Math.round(value);
+    }
+
+    function clockValue(clock) {
       if (!clock) return null;
       const match = String(clock).match(/^PT(?:(\d+)M)?([0-9.]+)S$/);
       if (!match) return null;
       const minutes = Number(match[1] || 0);
       const seconds = Number(match[2] || 0);
-      return Math.round(minutes * 60 + seconds);
+      return minutes * 60 + seconds;
     }
 
     function addToSetMap(map, key, value) {
@@ -589,6 +595,7 @@
       record._period = asInt(record.period) || 0;
       record._actionNumber = asInt(record.actionNumber) || rowNumber;
       record._clockSeconds = clockSeconds(record.clock);
+      record._clockValue = clockValue(record.clock);
       record._actionType = cleanText(record.actionType);
       record._subType = cleanText(record.subType);
       record._description = cleanText(record.description);
@@ -762,6 +769,7 @@
           primary,
           period: primary._period,
           clockSeconds: primary._clockSeconds,
+          clockValue: primary._clockValue,
           actionNumber: primary._actionNumber,
           firstRowNumber: Math.min(...group.map((row) => row._rowNumber)),
           pointsByTeam
@@ -812,7 +820,7 @@
       const subtype = cluster.primary._subType;
       const teamId = primaryTeam(cluster, context);
 
-      if (["Made Shot", "Missed Shot", "Turnover", "Free Throw"].includes(action)) return teamId;
+      if (["Made Shot", "Missed Shot", "Turnover", "Free Throw", "Heave"].includes(action)) return teamId;
       if (action === "Jump Ball") return jumpBallWinner(cluster, context);
       if (action === "Rebound") return reboundTeam(cluster, context);
       if (action === "Foul") {
@@ -824,7 +832,7 @@
     }
 
     function isLiveOffensiveCluster(cluster) {
-      return ["Made Shot", "Missed Shot", "Turnover", "Free Throw", "Foul"].includes(cluster.primary._actionType);
+      return ["Made Shot", "Missed Shot", "Turnover", "Free Throw", "Foul", "Heave"].includes(cluster.primary._actionType);
     }
 
     function startPossession(possessions, teamId, cluster, context, pendingRows, startReason) {
@@ -856,6 +864,39 @@
       };
     }
 
+    function pointsForRows(rows, teamId) {
+      return rows.reduce((total, row) => total + (row._pointsByTeam[teamId] || 0), 0);
+    }
+
+    function startCarriedPossession(possessions, teamId, startCluster, endCluster, context, pendingRows, startReason) {
+      const allRows = [...startCluster.rows, ...pendingRows, ...endCluster.rows];
+      const firstRow = allRows[0] || startCluster.primary;
+      const startClock = firstRow._clockSeconds == null ? startCluster.clockSeconds : firstRow._clockSeconds;
+      const points = pointsForRows(allRows, teamId);
+      return {
+        game_id: asInt(startCluster.primary.gameId),
+        source_sheet: startCluster.primary._sheetName,
+        possession_id: possessions.length,
+        period: startCluster.period,
+        offense: context.teamLabel[teamId] || "unknown",
+        offense_team_id: teamId,
+        offense_team: context.teamTricode[teamId] || "",
+        start_clock: startClock,
+        end_clock: endCluster.clockSeconds,
+        points,
+        scored: points ? 1 : 0,
+        poss_type: "halfcourt",
+        end_reason: "",
+        n_actions: allRows.length,
+        start_action: startCluster.actionNumber,
+        end_action: endCluster.actionNumber,
+        start_reason: startReason,
+        _rows: [...allRows],
+        _endCandidate: null,
+        _lastMissTeam: null
+      };
+    }
+
     function appendCluster(possession, cluster) {
       possession._rows.push(...cluster.rows);
       possession.n_actions += cluster.rows.length;
@@ -872,8 +913,10 @@
       possession._endCandidate = {
         reason,
         clock: cluster.clockSeconds,
+        clockValue: cluster.clockValue,
         action: cluster.actionNumber,
-        nActions: possession.n_actions
+        nActions: possession.n_actions,
+        cluster
       };
     }
 
@@ -905,6 +948,8 @@
       let current = null;
       let pendingRows = [];
       let carryTeam = null;
+      let carryStartCluster = null;
+      let carryStartReason = null;
 
       clusters.forEach((cluster) => {
         const action = cluster.primary._actionType;
@@ -919,6 +964,8 @@
             finalizePossession(current, possessions);
             current = null;
             carryTeam = clusterTeam;
+            carryStartCluster = null;
+            carryStartReason = null;
           } else if (clusterTeam === current.offense_team_id && isLiveOffensiveCluster(cluster)) {
             current._endCandidate = null;
           }
@@ -930,6 +977,8 @@
             current = null;
           }
           carryTeam = null;
+          carryStartCluster = null;
+          carryStartReason = null;
           pendingRows = [...cluster.rows];
           return;
         }
@@ -938,13 +987,25 @@
           if (current) {
             appendCluster(current, cluster);
             if (current._endCandidate) {
+              const candidate = current._endCandidate;
+              const nextTeam = opponent(current.offense_team_id, context);
               finalizePossession(current, possessions);
+              if (nextTeam && ["made_fg", "free_throw"].includes(candidate.reason) && candidate.clockValue > (cluster.clockValue ?? 0)) {
+                const terminal = startCarriedPossession(possessions, nextTeam, candidate.cluster, cluster, context, [], "inbound_after_score");
+                finalizePossession(terminal, possessions, "period_end", cluster.clockSeconds, cluster.actionNumber);
+              }
             } else {
               finalizePossession(current, possessions, "period_end", cluster.clockSeconds, cluster.actionNumber);
             }
             current = null;
+          } else if (carryTeam && carryStartCluster) {
+            current = startCarriedPossession(possessions, carryTeam, carryStartCluster, cluster, context, pendingRows, carryStartReason);
+            finalizePossession(current, possessions, "period_end", cluster.clockSeconds, cluster.actionNumber);
+            current = null;
           }
           carryTeam = null;
+          carryStartCluster = null;
+          carryStartReason = null;
           pendingRows = [];
           return;
         }
@@ -968,6 +1029,8 @@
           const startReason = action === "Jump Ball" ? "jump_ball" : action.toLowerCase().replace(/\s+/g, "_");
           current = startPossession(possessions, clusterTeam, cluster, context, pendingRows, startReason);
           carryTeam = null;
+          carryStartCluster = null;
+          carryStartReason = null;
           pendingRows = [];
         } else {
           appendCluster(current, cluster);
@@ -975,7 +1038,7 @@
 
         if (!current) return;
 
-        if (action === "Missed Shot") {
+        if (action === "Missed Shot" || action === "Heave") {
           current._lastMissTeam = current.offense_team_id;
         } else if (action === "Rebound") {
           const team = reboundTeam(cluster, context);
@@ -986,6 +1049,8 @@
               finalizePossession(current, possessions, "def_rebound", cluster.clockSeconds, cluster.actionNumber);
               current = null;
               carryTeam = team;
+              carryStartCluster = cluster;
+              carryStartReason = "def_rebound";
             }
           }
         } else if (action === "Made Shot") {
@@ -996,6 +1061,8 @@
           finalizePossession(current, possessions, "turnover", cluster.clockSeconds, cluster.actionNumber);
           current = null;
           carryTeam = nextTeam;
+          carryStartCluster = null;
+          carryStartReason = null;
         } else if (action === "Free Throw") {
           const freeThrow = parseFreeThrowSubtype(subtype);
           const isLast = freeThrow.total == null || freeThrow.attempt === freeThrow.total;
@@ -1076,13 +1143,35 @@
       return sheet;
     }
 
+    function safeSheetName(rawName, usedNames) {
+      const cleaned = cleanText(rawName)
+        .replace(/[\[\]:*?/\\]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      const fallback = cleaned || "Game";
+      const base = fallback.slice(0, 31);
+      let name = base;
+      let counter = 2;
+      while (usedNames.has(name)) {
+        const suffix = ` ${counter}`;
+        name = `${base.slice(0, 31 - suffix.length)}${suffix}`;
+        counter += 1;
+      }
+      usedNames.add(name);
+      return name;
+    }
+
     function makeOutputWorkbook(result) {
       const output = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(output, makeSheet(result.possessions, POSSESSION_HEADERS), "Possessions");
-      XLSX.utils.book_append_sheet(output, makeSheet(result.teamMaps, TEAM_MAP_HEADERS), "Team Map");
+      const usedSheetNames = new Set();
+      result.processedSheets.forEach((sheetName) => {
+        const rows = result.possessions.filter((row) => row.source_sheet === sheetName);
+        XLSX.utils.book_append_sheet(output, makeSheet(rows, POSSESSION_HEADERS), safeSheetName(sheetName, usedSheetNames));
+      });
+      XLSX.utils.book_append_sheet(output, makeSheet(result.teamMaps, TEAM_MAP_HEADERS), safeSheetName("Team Map", usedSheetNames));
       const methodSheet = XLSX.utils.aoa_to_sheet(METHOD_ROWS);
       methodSheet["!cols"] = [{ wch: 20 }, { wch: 92 }];
-      XLSX.utils.book_append_sheet(output, methodSheet, "Method");
+      XLSX.utils.book_append_sheet(output, methodSheet, safeSheetName("Method", usedSheetNames));
       return output;
     }
 
