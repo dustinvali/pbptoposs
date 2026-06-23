@@ -1,0 +1,6 @@
+This package includes xlsx.full.min.js from SheetJS.
+
+xlsx.js (C) 2013-present SheetJS
+Project: https://sheetjs.com/
+
+The file is included so the converter can run locally without loading a remote CDN script.

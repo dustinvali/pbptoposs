@@ -1,0 +1,1205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NBA PBP Possession Converter</title>
+  <script src="./vendor/xlsx.full.min.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #141312;
+      --muted: #625d55;
+      --paper: #f7f5f0;
+      --panel: #ffffff;
+      --line: #d9d2c5;
+      --court: #b3532b;
+      --paint: #205c6f;
+      --make: #1b7f5a;
+      --miss: #a23b3b;
+      --focus: #1f6feb;
+      --shadow: 0 18px 45px rgba(41, 31, 22, 0.13);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 15px;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    .app {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 28px 0 40px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) auto;
+      align-items: end;
+      gap: 20px;
+      border-bottom: 2px solid var(--ink);
+      padding-bottom: 14px;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 48px);
+      line-height: 0.95;
+      font-weight: 850;
+      letter-spacing: 0;
+    }
+
+    .mark {
+      justify-self: end;
+      width: 116px;
+      height: 72px;
+      border: 2px solid var(--ink);
+      position: relative;
+      background:
+        linear-gradient(90deg, transparent 49%, var(--ink) 49%, var(--ink) 51%, transparent 51%),
+        linear-gradient(0deg, transparent 48%, rgba(20, 19, 18, 0.2) 48%, rgba(20, 19, 18, 0.2) 52%, transparent 52%),
+        var(--panel);
+    }
+
+    .mark::before,
+    .mark::after {
+      content: "";
+      position: absolute;
+      top: 19px;
+      width: 22px;
+      height: 30px;
+      border: 2px solid var(--court);
+    }
+
+    .mark::before {
+      left: -2px;
+      border-left: 0;
+    }
+
+    .mark::after {
+      right: -2px;
+      border-right: 0;
+    }
+
+    .tool {
+      display: grid;
+      grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .controls,
+    .results {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+    }
+
+    .controls {
+      padding: 18px;
+    }
+
+    .drop {
+      border: 2px dashed var(--paint);
+      background: #f4fbfd;
+      min-height: 168px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      padding: 20px;
+      cursor: pointer;
+      transition: border-color 150ms ease, background 150ms ease;
+    }
+
+    .drop:hover,
+    .drop.is-dragging {
+      background: #e8f5f8;
+      border-color: var(--court);
+    }
+
+    .drop strong {
+      display: block;
+      font-size: 20px;
+      margin-bottom: 7px;
+    }
+
+    .drop span {
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
+    .file-input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      margin-top: 16px;
+    }
+
+    label,
+    .label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    select {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      min-height: 42px;
+      padding: 8px 10px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-top: 16px;
+    }
+
+    button {
+      border: 0;
+      background: var(--ink);
+      color: #fff;
+      min-height: 44px;
+      padding: 0 16px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      background: #a8a29a;
+    }
+
+    .status {
+      color: var(--muted);
+      line-height: 1.35;
+      min-height: 40px;
+      margin: 14px 0 0;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .stat {
+      padding: 16px;
+      border-right: 1px solid var(--line);
+    }
+
+    .stat:last-child {
+      border-right: 0;
+    }
+
+    .stat b {
+      display: block;
+      font-size: 28px;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stat span {
+      color: var(--muted);
+      display: block;
+      margin-top: 5px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .section {
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .section:last-child {
+      border-bottom: 0;
+    }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      text-transform: uppercase;
+    }
+
+    .map-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 10px;
+    }
+
+    .map-item {
+      border-left: 5px solid var(--paint);
+      background: #f9fafb;
+      padding: 10px 12px;
+      min-height: 82px;
+    }
+
+    .map-item:nth-child(even) {
+      border-left-color: var(--court);
+    }
+
+    .map-title {
+      font-weight: 800;
+      margin-bottom: 4px;
+    }
+
+    .map-item dl {
+      margin: 0;
+      display: grid;
+      grid-template-columns: 70px 1fr;
+      gap: 3px 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .map-item dt {
+      font-weight: 700;
+      color: var(--ink);
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border-top: 1px solid var(--line);
+      max-height: 410px;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 880px;
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid #ece7dc;
+      padding: 8px 10px;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: var(--ink);
+      color: #fff;
+      z-index: 1;
+    }
+
+    td.number {
+      text-align: right;
+    }
+
+    .pill {
+      display: inline-block;
+      min-width: 62px;
+      text-align: center;
+      padding: 3px 8px;
+      color: #fff;
+      font-weight: 800;
+      background: var(--paint);
+    }
+
+    .pill.team_b {
+      background: var(--court);
+    }
+
+    .empty {
+      color: var(--muted);
+      padding: 26px 16px;
+    }
+
+    :focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 3px;
+    }
+
+    @media (max-width: 840px) {
+      .app {
+        width: min(100vw - 20px, 620px);
+        padding-top: 14px;
+      }
+
+      header,
+      .tool {
+        grid-template-columns: 1fr;
+      }
+
+      .mark {
+        justify-self: start;
+      }
+
+      .stats {
+        grid-template-columns: 1fr;
+      }
+
+      .stat {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .stat:last-child {
+        border-bottom: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <h1>NBA PBP Possession Converter</h1>
+      <div class="mark" aria-hidden="true"></div>
+    </header>
+
+    <div class="tool">
+      <section class="controls" aria-label="Converter controls">
+        <div id="dropZone" class="drop" tabindex="0" role="button">
+          <div>
+            <strong>Drop an XLSX file</strong>
+            <span>Raw NBA play-by-play sheets in, possession workbook out.</span>
+          </div>
+        </div>
+        <input id="fileInput" class="file-input" type="file" accept=".xlsx,.xls">
+
+        <div class="field">
+          <label for="teamMode">Team A</label>
+          <select id="teamMode">
+            <option value="home">Home team</option>
+            <option value="first">First team in file</option>
+            <option value="alpha">Alphabetical by code</option>
+          </select>
+        </div>
+
+        <div class="actions">
+          <button id="downloadButton" disabled>Download workbook</button>
+        </div>
+
+        <p id="status" class="status">Waiting for a workbook.</p>
+      </section>
+
+      <section class="results" aria-label="Conversion preview">
+        <div class="stats">
+          <div class="stat"><b id="statSheets">0</b><span>Sheets</span></div>
+          <div class="stat"><b id="statPoss">0</b><span>Possessions</span></div>
+          <div class="stat"><b id="statGames">0</b><span>Games</span></div>
+        </div>
+
+        <div class="section">
+          <h2>Team Map</h2>
+          <div id="teamMap" class="map-grid">
+            <div class="empty">No workbook loaded.</div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h2>Preview</h2>
+        </div>
+        <div id="preview" class="table-wrap">
+          <div class="empty">Possessions will appear here.</div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const NBA_TEAM_KEYWORDS = {
+      ATL: ["HAWKS", "ATLANTA"],
+      BOS: ["CELTICS", "BOSTON"],
+      BKN: ["NETS", "BROOKLYN"],
+      CHA: ["HORNETS", "CHARLOTTE"],
+      CHI: ["BULLS", "CHICAGO"],
+      CLE: ["CAVALIERS", "CAVS", "CLEVELAND"],
+      DAL: ["MAVERICKS", "MAVS", "DALLAS"],
+      DEN: ["NUGGETS", "DENVER"],
+      DET: ["PISTONS", "DETROIT"],
+      GSW: ["WARRIORS", "GOLDEN STATE"],
+      HOU: ["ROCKETS", "HOUSTON"],
+      IND: ["PACERS", "INDIANA"],
+      LAC: ["CLIPPERS", "LA CLIPPERS"],
+      LAL: ["LAKERS", "LOS ANGELES LAKERS"],
+      MEM: ["GRIZZLIES", "MEMPHIS"],
+      MIA: ["HEAT", "MIAMI"],
+      MIL: ["BUCKS", "MILWAUKEE"],
+      MIN: ["TIMBERWOLVES", "WOLVES", "MINNESOTA"],
+      NOP: ["PELICANS", "NEW ORLEANS"],
+      NYK: ["KNICKS", "NEW YORK"],
+      OKC: ["THUNDER", "OKLAHOMA CITY"],
+      ORL: ["MAGIC", "ORLANDO"],
+      PHI: ["76ERS", "SIXERS", "PHILADELPHIA"],
+      PHX: ["SUNS", "PHOENIX"],
+      POR: ["TRAIL BLAZERS", "BLAZERS", "PORTLAND"],
+      SAC: ["KINGS", "SACRAMENTO"],
+      SAS: ["SPURS", "SAN ANTONIO"],
+      TOR: ["RAPTORS", "TORONTO"],
+      UTA: ["JAZZ", "UTAH"],
+      WAS: ["WIZARDS", "WASHINGTON"]
+    };
+
+    const REQUIRED_HEADERS = [
+      "gameId",
+      "actionNumber",
+      "clock",
+      "period",
+      "teamId",
+      "teamTricode",
+      "playerName",
+      "playerNameI",
+      "scoreHome",
+      "scoreAway",
+      "location",
+      "description",
+      "actionType",
+      "subType"
+    ];
+
+    const POSSESSION_HEADERS = [
+      "game_id",
+      "source_sheet",
+      "possession_id",
+      "period",
+      "offense",
+      "offense_team_id",
+      "offense_team",
+      "start_clock",
+      "end_clock",
+      "points",
+      "scored",
+      "poss_type",
+      "end_reason",
+      "n_actions",
+      "start_action",
+      "end_action",
+      "start_reason"
+    ];
+
+    const TEAM_MAP_HEADERS = [
+      "game_id",
+      "source_sheet",
+      "team_a_id",
+      "team_a_code",
+      "team_a_side",
+      "team_b_id",
+      "team_b_code",
+      "team_b_side",
+      "label_mode"
+    ];
+
+    const METHOD_ROWS = [
+      ["Field", "Rule"],
+      ["offense", "The team with the possession, expressed as team_a or team_b."],
+      ["Team Map", "Maps team_a and team_b to team IDs and team codes for every source sheet."],
+      ["Default labels", "team_a is the home team when home/away is available."],
+      ["Start possession", "Uses the jump-ball tip receiver, first live offensive action, free throws after defensive fouls, or the next post-boundary action."],
+      ["End possession", "Ends on made field goal, turnover, final possession-ending free throw, defensive rebound, or period end."],
+      ["Points", "Uses scoreHome and scoreAway deltas mapped to the possession offense."],
+      ["Grouped rows", "Rows sharing period and actionNumber are treated as one event cluster for steals, blocks, and annotations."]
+    ];
+
+    const state = {
+      file: null,
+      result: null
+    };
+
+    const fileInput = document.getElementById("fileInput");
+    const dropZone = document.getElementById("dropZone");
+    const teamMode = document.getElementById("teamMode");
+    const downloadButton = document.getElementById("downloadButton");
+    const status = document.getElementById("status");
+    const preview = document.getElementById("preview");
+    const teamMap = document.getElementById("teamMap");
+    const statSheets = document.getElementById("statSheets");
+    const statPoss = document.getElementById("statPoss");
+    const statGames = document.getElementById("statGames");
+
+    function cleanText(value) {
+      return value == null ? "" : String(value).trim();
+    }
+
+    function asFloat(value) {
+      if (value == null || value === "") return null;
+      const number = Number(value);
+      return Number.isFinite(number) ? number : null;
+    }
+
+    function asInt(value) {
+      const number = asFloat(value);
+      if (number == null) return null;
+      const integer = Math.trunc(number);
+      return integer > 0 ? integer : null;
+    }
+
+    function clockSeconds(clock) {
+      if (!clock) return null;
+      const match = String(clock).match(/^PT(?:(\d+)M)?([0-9.]+)S$/);
+      if (!match) return null;
+      const minutes = Number(match[1] || 0);
+      const seconds = Number(match[2] || 0);
+      return Math.round(minutes * 60 + seconds);
+    }
+
+    function addToSetMap(map, key, value) {
+      if (!key || !value) return;
+      const normalized = String(key).toLowerCase();
+      if (!map[normalized]) map[normalized] = [];
+      if (!map[normalized].includes(value)) map[normalized].push(value);
+    }
+
+    function ensureTeam(context, teamId) {
+      if (!teamId || context.teams.includes(teamId)) return;
+      context.teams.push(teamId);
+    }
+
+    function rowDict(headers, values, sheetName, rowNumber) {
+      const record = {};
+      headers.forEach((header, index) => {
+        if (header) record[header] = values[index] ?? "";
+      });
+      record._sheetName = sheetName;
+      record._rowNumber = rowNumber;
+      record._teamId = asInt(record.teamId);
+      record._period = asInt(record.period) || 0;
+      record._actionNumber = asInt(record.actionNumber) || rowNumber;
+      record._clockSeconds = clockSeconds(record.clock);
+      record._actionType = cleanText(record.actionType);
+      record._subType = cleanText(record.subType);
+      record._description = cleanText(record.description);
+      record._location = cleanText(record.location).toLowerCase();
+      record._teamTricode = cleanText(record.teamTricode);
+      record._pointsByTeam = {};
+      return record;
+    }
+
+    function validateHeaders(headers, sheetName) {
+      const available = new Set(headers.filter(Boolean));
+      const missing = REQUIRED_HEADERS.filter((header) => !available.has(header));
+      if (missing.length) {
+        throw new Error(`${sheetName} is missing: ${missing.join(", ")}`);
+      }
+    }
+
+    function rowsFromSheet(workbook, sheetName) {
+      const sheet = workbook.Sheets[sheetName];
+      const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
+      if (!matrix.length) return null;
+      const headers = matrix[0].map(cleanText);
+      const hasAnyRequired = REQUIRED_HEADERS.some((header) => headers.includes(header));
+      if (!hasAnyRequired) return null;
+      validateHeaders(headers, sheetName);
+      return matrix
+        .slice(1)
+        .map((row, index) => rowDict(headers, row, sheetName, index + 2))
+        .filter((row) => Object.keys(row).some((key) => !key.startsWith("_") && row[key] !== ""));
+    }
+
+    function buildContext(rows, labelMode) {
+      const context = {
+        teamSide: {},
+        sideTeam: {},
+        teamTricode: {},
+        tricodeTeam: {},
+        playerTeam: {},
+        teams: [],
+        teamLabel: {},
+        labelTeams: {}
+      };
+
+      rows.forEach((row) => {
+        const teamId = row._teamId;
+        const tricode = row._teamTricode;
+        if (teamId) ensureTeam(context, teamId);
+
+        if (teamId && (row._location === "h" || row._location === "v")) {
+          context.teamSide[teamId] = row._location;
+          context.sideTeam[row._location] = teamId;
+        }
+
+        if (teamId && tricode) {
+          context.teamTricode[teamId] = tricode;
+          context.tricodeTeam[tricode.toUpperCase()] = teamId;
+        }
+
+        const names = [cleanText(row.playerName), cleanText(row.playerNameI)].filter(Boolean);
+        names.forEach((name) => {
+          addToSetMap(context.playerTeam, name, teamId);
+          const pieces = name.split(/\s+/);
+          addToSetMap(context.playerTeam, pieces[pieces.length - 1], teamId);
+        });
+      });
+
+      assignTeamLabels(context, labelMode);
+      return context;
+    }
+
+    function assignTeamLabels(context, labelMode) {
+      if (context.teams.length < 2) {
+        throw new Error("Could not find two teams in one of the PBP sheets.");
+      }
+
+      let teamA;
+      let teamB;
+
+      if (labelMode === "home" && context.sideTeam.h && context.sideTeam.v) {
+        teamA = context.sideTeam.h;
+        teamB = context.sideTeam.v;
+      } else if (labelMode === "alpha") {
+        const sorted = [...context.teams].sort((left, right) => {
+          const leftCode = context.teamTricode[left] || String(left);
+          const rightCode = context.teamTricode[right] || String(right);
+          return leftCode.localeCompare(rightCode);
+        });
+        [teamA, teamB] = sorted;
+      } else {
+        [teamA, teamB] = context.teams;
+      }
+
+      if (!teamA || !teamB || teamA === teamB) {
+        const fallback = context.teams.slice(0, 2);
+        [teamA, teamB] = fallback;
+      }
+
+      context.teamLabel[teamA] = "team_a";
+      context.teamLabel[teamB] = "team_b";
+      context.labelTeams = { team_a: teamA, team_b: teamB };
+    }
+
+    function opponent(teamId, context) {
+      if (!teamId) return null;
+      return context.teams.find((candidate) => candidate !== teamId) || null;
+    }
+
+    function inferTeamFromDescription(description, context) {
+      const text = cleanText(description);
+      const upper = text.toUpperCase();
+      const tip = text.match(/Tip to ([A-Za-z.' -]+)/i);
+      if (tip) {
+        const player = tip[1].trim().toLowerCase();
+        const candidates = context.playerTeam[player] || [];
+        if (candidates.length === 1) return candidates[0];
+      }
+
+      for (const [tricode, teamId] of Object.entries(context.tricodeTeam)) {
+        if (new RegExp(`\\b${tricode}\\b`).test(upper)) return teamId;
+        const keywords = NBA_TEAM_KEYWORDS[tricode] || [];
+        if (keywords.some((keyword) => upper.includes(keyword))) return teamId;
+      }
+      return null;
+    }
+
+    function addScoreDeltas(rows, context) {
+      let previousHome = 0;
+      let previousAway = 0;
+      const homeTeam = context.sideTeam.h;
+      const awayTeam = context.sideTeam.v;
+
+      rows.forEach((row) => {
+        row._pointsByTeam = {};
+        const scoreHome = asFloat(row.scoreHome);
+        const scoreAway = asFloat(row.scoreAway);
+        if (scoreHome == null || scoreAway == null) return;
+
+        const homeDelta = Math.max(0, Math.round(scoreHome - previousHome));
+        const awayDelta = Math.max(0, Math.round(scoreAway - previousAway));
+        if (homeDelta && homeTeam) row._pointsByTeam[homeTeam] = homeDelta;
+        if (awayDelta && awayTeam) row._pointsByTeam[awayTeam] = awayDelta;
+        previousHome = scoreHome;
+        previousAway = scoreAway;
+      });
+    }
+
+    function clusterRows(rows) {
+      const grouped = new Map();
+      const order = [];
+      rows.forEach((row) => {
+        const key = `${row._period}|${row._actionNumber}`;
+        if (!grouped.has(key)) {
+          grouped.set(key, []);
+          order.push(key);
+        }
+        grouped.get(key).push(row);
+      });
+
+      return order.map((key) => {
+        const group = grouped.get(key);
+        const primary = group.find((row) => row._actionType) || group[0];
+        const pointsByTeam = {};
+        group.forEach((row) => {
+          Object.entries(row._pointsByTeam).forEach(([teamId, points]) => {
+            pointsByTeam[teamId] = (pointsByTeam[teamId] || 0) + points;
+          });
+        });
+        return {
+          key,
+          rows: group,
+          primary,
+          period: primary._period,
+          clockSeconds: primary._clockSeconds,
+          actionNumber: primary._actionNumber,
+          pointsByTeam
+        };
+      });
+    }
+
+    function parseFreeThrowSubtype(subtype) {
+      const text = cleanText(subtype);
+      const match = text.match(/(\d+)\s+of\s+(\d+)/);
+      return {
+        attempt: match ? Number(match[1]) : null,
+        total: match ? Number(match[2]) : null,
+        technical: text.includes("Technical"),
+        flagrant: text.includes("Flagrant")
+      };
+    }
+
+    function primaryTeam(cluster) {
+      return cluster.primary._teamId || null;
+    }
+
+    function reboundTeam(cluster, context) {
+      return primaryTeam(cluster) || inferTeamFromDescription(cluster.primary._description, context);
+    }
+
+    function jumpBallWinner(cluster, context) {
+      return inferTeamFromDescription(cluster.primary._description, context);
+    }
+
+    function possessionTeamForCluster(cluster, context, currentTeam) {
+      const action = cluster.primary._actionType;
+      const subtype = cluster.primary._subType;
+      const teamId = primaryTeam(cluster);
+
+      if (["Made Shot", "Missed Shot", "Turnover", "Free Throw"].includes(action)) return teamId;
+      if (action === "Jump Ball") return jumpBallWinner(cluster, context);
+      if (action === "Rebound") return reboundTeam(cluster, context);
+      if (action === "Foul") {
+        if (subtype === "Offensive") return teamId;
+        if (subtype === "Technical") return currentTeam || null;
+        return opponent(teamId, context);
+      }
+      return null;
+    }
+
+    function isLiveOffensiveCluster(cluster) {
+      return ["Made Shot", "Missed Shot", "Turnover", "Free Throw", "Foul"].includes(cluster.primary._actionType);
+    }
+
+    function startPossession(possessions, teamId, cluster, context, pendingRows, startReason) {
+      const allRows = [...pendingRows, ...cluster.rows];
+      const firstRow = allRows[0] || cluster.primary;
+      const startClock = firstRow._clockSeconds == null ? cluster.clockSeconds : firstRow._clockSeconds;
+      const points = cluster.pointsByTeam[teamId] || 0;
+      return {
+        game_id: asInt(cluster.primary.gameId),
+        source_sheet: cluster.primary._sheetName,
+        possession_id: possessions.length,
+        period: cluster.period,
+        offense: context.teamLabel[teamId] || "unknown",
+        offense_team_id: teamId,
+        offense_team: context.teamTricode[teamId] || "",
+        start_clock: startClock,
+        end_clock: cluster.clockSeconds,
+        points,
+        scored: points ? 1 : 0,
+        poss_type: "halfcourt",
+        end_reason: "",
+        n_actions: allRows.length,
+        start_action: firstRow._actionNumber,
+        end_action: cluster.actionNumber,
+        start_reason: startReason,
+        _rows: [...allRows],
+        _endCandidate: null,
+        _lastMissTeam: null
+      };
+    }
+
+    function appendCluster(possession, cluster) {
+      possession._rows.push(...cluster.rows);
+      possession.n_actions += cluster.rows.length;
+      possession.end_clock = cluster.clockSeconds;
+      possession.end_action = cluster.actionNumber;
+      const points = cluster.pointsByTeam[possession.offense_team_id] || 0;
+      if (points) {
+        possession.points += points;
+        possession.scored = 1;
+      }
+    }
+
+    function markCandidate(possession, cluster, reason) {
+      possession._endCandidate = {
+        reason,
+        clock: cluster.clockSeconds,
+        action: cluster.actionNumber
+      };
+    }
+
+    function finalizePossession(possession, possessions, reason, clock, action) {
+      const candidate = possession._endCandidate || {};
+      possession.end_reason = reason || candidate.reason || "unknown";
+      possession.end_clock = clock == null ? (candidate.clock ?? possession.end_clock) : clock;
+      possession.end_action = action == null ? (candidate.action ?? possession.end_action) : action;
+
+      const elapsed = (possession.start_clock || 0) - (possession.end_clock || 0);
+      if (["steal", "def_rebound"].includes(possession.start_reason) && elapsed >= 0 && elapsed <= 8 && ["made_fg", "free_throw"].includes(possession.end_reason)) {
+        possession.poss_type = "transition";
+      }
+
+      const publicRow = {};
+      POSSESSION_HEADERS.forEach((header) => {
+        publicRow[header] = possession[header] ?? "";
+      });
+      possessions.push(publicRow);
+    }
+
+    function processSheet(rows, context) {
+      addScoreDeltas(rows, context);
+      const clusters = clusterRows(rows);
+      const possessions = [];
+      let current = null;
+      let pendingRows = [];
+
+      clusters.forEach((cluster) => {
+        const action = cluster.primary._actionType;
+        const subtype = cluster.primary._subType;
+        const clusterTeam = possessionTeamForCluster(cluster, context, current ? current.offense_team_id : null);
+
+        if (current && current._endCandidate && clusterTeam) {
+          if (clusterTeam !== current.offense_team_id && isLiveOffensiveCluster(cluster)) {
+            finalizePossession(current, possessions);
+            current = null;
+          } else if (clusterTeam === current.offense_team_id && isLiveOffensiveCluster(cluster)) {
+            current._endCandidate = null;
+          }
+        }
+
+        if (action === "period" && subtype === "start") {
+          if (current) {
+            finalizePossession(current, possessions, "period_start");
+            current = null;
+          }
+          pendingRows = [...cluster.rows];
+          return;
+        }
+
+        if (action === "period" && subtype === "end") {
+          if (current) {
+            appendCluster(current, cluster);
+            if (current._endCandidate) {
+              finalizePossession(current, possessions);
+            } else {
+              finalizePossession(current, possessions, "period_end", cluster.clockSeconds, cluster.actionNumber);
+            }
+            current = null;
+          }
+          pendingRows = [];
+          return;
+        }
+
+        if (!current) {
+          if (["Substitution", "Timeout", "Instant Replay", ""].includes(action)) {
+            pendingRows.push(...cluster.rows);
+            return;
+          }
+
+          if (action === "Foul" && subtype === "Technical") {
+            pendingRows.push(...cluster.rows);
+            return;
+          }
+
+          if (!clusterTeam) {
+            pendingRows.push(...cluster.rows);
+            return;
+          }
+
+          const startReason = action === "Jump Ball" ? "jump_ball" : action.toLowerCase().replace(/\s+/g, "_");
+          current = startPossession(possessions, clusterTeam, cluster, context, pendingRows, startReason);
+          pendingRows = [];
+        } else {
+          appendCluster(current, cluster);
+        }
+
+        if (!current) return;
+
+        if (action === "Missed Shot") {
+          current._lastMissTeam = current.offense_team_id;
+        } else if (action === "Rebound") {
+          const team = reboundTeam(cluster, context);
+          if (current._lastMissTeam === current.offense_team_id && team) {
+            if (team === current.offense_team_id) {
+              current._lastMissTeam = null;
+            } else {
+              finalizePossession(current, possessions, "def_rebound", cluster.clockSeconds, cluster.actionNumber);
+              current = null;
+            }
+          }
+        } else if (action === "Made Shot") {
+          current._lastMissTeam = null;
+          markCandidate(current, cluster, "made_fg");
+        } else if (action === "Turnover") {
+          finalizePossession(current, possessions, "turnover", cluster.clockSeconds, cluster.actionNumber);
+          current = null;
+        } else if (action === "Free Throw") {
+          const freeThrow = parseFreeThrowSubtype(subtype);
+          const isLast = freeThrow.total == null || freeThrow.attempt === freeThrow.total;
+          if (isLast) {
+            const missed = cluster.primary._description.toUpperCase().includes("MISS");
+            if (missed) {
+              current._lastMissTeam = current.offense_team_id;
+            } else if (freeThrow.flagrant) {
+              current._endCandidate = null;
+            } else {
+              markCandidate(current, cluster, "free_throw");
+            }
+          }
+        }
+      });
+
+      if (current) {
+        if (current._endCandidate) finalizePossession(current, possessions);
+        else finalizePossession(current, possessions, "end_file");
+      }
+
+      return possessions;
+    }
+
+    function teamMapRow(context, rows, sourceSheet, labelMode) {
+      const teamA = context.labelTeams.team_a;
+      const teamB = context.labelTeams.team_b;
+      const firstGameId = asInt(rows.find((row) => asInt(row.gameId))?.gameId);
+      return {
+        game_id: firstGameId,
+        source_sheet: sourceSheet,
+        team_a_id: teamA,
+        team_a_code: context.teamTricode[teamA] || "",
+        team_a_side: context.teamSide[teamA] || "",
+        team_b_id: teamB,
+        team_b_code: context.teamTricode[teamB] || "",
+        team_b_side: context.teamSide[teamB] || "",
+        label_mode: labelMode
+      };
+    }
+
+    function convertWorkbook(workbook, labelMode) {
+      const allPossessions = [];
+      const teamMaps = [];
+      const processedSheets = [];
+      const errors = [];
+
+      workbook.SheetNames.forEach((sheetName) => {
+        try {
+          const rows = rowsFromSheet(workbook, sheetName);
+          if (!rows) return;
+          const context = buildContext(rows, labelMode);
+          const possessions = processSheet(rows, context);
+          allPossessions.push(...possessions);
+          teamMaps.push(teamMapRow(context, rows, sheetName, labelMode));
+          processedSheets.push(sheetName);
+        } catch (error) {
+          errors.push(error.message);
+        }
+      });
+
+      if (!processedSheets.length) {
+        throw new Error(errors[0] || "No valid NBA PBP sheets were found.");
+      }
+
+      return {
+        possessions: allPossessions,
+        teamMaps,
+        processedSheets,
+        errors
+      };
+    }
+
+    function makeSheet(rows, headers) {
+      const matrix = [headers, ...rows.map((row) => headers.map((header) => row[header] ?? ""))];
+      const sheet = XLSX.utils.aoa_to_sheet(matrix);
+      sheet["!cols"] = headers.map((header) => ({ wch: Math.max(12, header.length + 2) }));
+      return sheet;
+    }
+
+    function makeOutputWorkbook(result) {
+      const output = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(output, makeSheet(result.possessions, POSSESSION_HEADERS), "Possessions");
+      XLSX.utils.book_append_sheet(output, makeSheet(result.teamMaps, TEAM_MAP_HEADERS), "Team Map");
+      const methodSheet = XLSX.utils.aoa_to_sheet(METHOD_ROWS);
+      methodSheet["!cols"] = [{ wch: 20 }, { wch: 92 }];
+      XLSX.utils.book_append_sheet(output, methodSheet, "Method");
+      return output;
+    }
+
+    function baseName(fileName) {
+      return fileName.replace(/\.[^.]+$/, "");
+    }
+
+    function setStatus(message, isError = false) {
+      status.textContent = message;
+      status.style.color = isError ? "var(--miss)" : "var(--muted)";
+    }
+
+    function renderTeamMap(teamMaps) {
+      if (!teamMaps.length) {
+        teamMap.innerHTML = '<div class="empty">No workbook loaded.</div>';
+        return;
+      }
+
+      teamMap.innerHTML = teamMaps.map((item) => `
+        <div class="map-item">
+          <div class="map-title">${escapeHtml(item.source_sheet)}</div>
+          <dl>
+            <dt>team_a</dt><dd>${escapeHtml(item.team_a_code)} (${escapeHtml(item.team_a_side || "n/a")})</dd>
+            <dt>team_b</dt><dd>${escapeHtml(item.team_b_code)} (${escapeHtml(item.team_b_side || "n/a")})</dd>
+          </dl>
+        </div>
+      `).join("");
+    }
+
+    function renderPreview(possessions) {
+      if (!possessions.length) {
+        preview.innerHTML = '<div class="empty">No possessions found.</div>';
+        return;
+      }
+
+      const headers = POSSESSION_HEADERS.slice(0, 13);
+      const rows = possessions.slice(0, 18);
+      preview.innerHTML = `
+        <table>
+          <thead>
+            <tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr>
+          </thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                ${headers.map((header) => renderCell(header, row[header])).join("")}
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `;
+    }
+
+    function renderCell(header, value) {
+      if (header === "offense") {
+        return `<td><span class="pill ${escapeHtml(value)}">${escapeHtml(value)}</span></td>`;
+      }
+      const numeric = ["game_id", "possession_id", "period", "offense_team_id", "start_clock", "end_clock", "points", "scored", "n_actions"].includes(header);
+      return `<td class="${numeric ? "number" : ""}">${escapeHtml(value)}</td>`;
+    }
+
+    function escapeHtml(value) {
+      return cleanText(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function renderResult(result) {
+      const gameCount = new Set(result.teamMaps.map((item) => item.game_id)).size;
+      statSheets.textContent = result.processedSheets.length;
+      statPoss.textContent = result.possessions.length;
+      statGames.textContent = gameCount;
+      renderTeamMap(result.teamMaps);
+      renderPreview(result.possessions);
+      downloadButton.disabled = false;
+    }
+
+    async function loadFile(file) {
+      if (!window.XLSX) {
+        setStatus("The XLSX library did not load.", true);
+        return;
+      }
+
+      state.file = file;
+      downloadButton.disabled = true;
+      setStatus(`Reading ${file.name}...`);
+
+      try {
+        const buffer = await file.arrayBuffer();
+        const workbook = XLSX.read(buffer, { type: "array", raw: true });
+        const result = convertWorkbook(workbook, teamMode.value);
+        state.result = result;
+        renderResult(result);
+        const warning = result.errors.length ? ` Skipped ${result.errors.length} sheet(s).` : "";
+        setStatus(`${file.name} is ready.${warning}`);
+      } catch (error) {
+        state.result = null;
+        statSheets.textContent = "0";
+        statPoss.textContent = "0";
+        statGames.textContent = "0";
+        renderTeamMap([]);
+        renderPreview([]);
+        downloadButton.disabled = true;
+        setStatus(error.message, true);
+      }
+    }
+
+    dropZone.addEventListener("click", () => fileInput.click());
+    dropZone.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        fileInput.click();
+      }
+    });
+
+    dropZone.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      dropZone.classList.add("is-dragging");
+    });
+
+    dropZone.addEventListener("dragleave", () => {
+      dropZone.classList.remove("is-dragging");
+    });
+
+    dropZone.addEventListener("drop", (event) => {
+      event.preventDefault();
+      dropZone.classList.remove("is-dragging");
+      const file = event.dataTransfer.files[0];
+      if (file) loadFile(file);
+    });
+
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files[0];
+      if (file) loadFile(file);
+    });
+
+    teamMode.addEventListener("change", () => {
+      if (state.file) loadFile(state.file);
+    });
+
+    downloadButton.addEventListener("click", () => {
+      if (!state.result || !state.file) return;
+      const workbook = makeOutputWorkbook(state.result);
+      XLSX.writeFile(workbook, `${baseName(state.file.name)}_possessions.xlsx`, { compression: true });
+    });
+  </script>
+</body>
+</html>
