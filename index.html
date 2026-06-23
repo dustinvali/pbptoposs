@@ -763,8 +763,15 @@
           period: primary._period,
           clockSeconds: primary._clockSeconds,
           actionNumber: primary._actionNumber,
+          firstRowNumber: Math.min(...group.map((row) => row._rowNumber)),
           pointsByTeam
         };
+      }).sort((left, right) => {
+        if (left.period !== right.period) return left.period - right.period;
+        const leftClock = left.clockSeconds ?? -1;
+        const rightClock = right.clockSeconds ?? -1;
+        if (leftClock !== rightClock) return rightClock - leftClock;
+        return left.firstRowNumber - right.firstRowNumber;
       });
     }
 
@@ -779,12 +786,21 @@
       };
     }
 
-    function primaryTeam(cluster) {
-      return cluster.primary._teamId || null;
+    function teamFromCluster(cluster, context) {
+      if (cluster.primary._teamId) return cluster.primary._teamId;
+      if (cluster.primary._location === "h" || cluster.primary._location === "v") {
+        const sideTeam = context.sideTeam[cluster.primary._location];
+        if (sideTeam) return sideTeam;
+      }
+      return inferTeamFromDescription(cluster.primary._description, context);
+    }
+
+    function primaryTeam(cluster, context) {
+      return teamFromCluster(cluster, context);
     }
 
     function reboundTeam(cluster, context) {
-      return primaryTeam(cluster) || inferTeamFromDescription(cluster.primary._description, context);
+      return teamFromCluster(cluster, context);
     }
 
     function jumpBallWinner(cluster, context) {
@@ -794,7 +810,7 @@
     function possessionTeamForCluster(cluster, context, currentTeam) {
       const action = cluster.primary._actionType;
       const subtype = cluster.primary._subType;
-      const teamId = primaryTeam(cluster);
+      const teamId = primaryTeam(cluster, context);
 
       if (["Made Shot", "Missed Shot", "Turnover", "Free Throw"].includes(action)) return teamId;
       if (action === "Jump Ball") return jumpBallWinner(cluster, context);
@@ -831,7 +847,7 @@
         poss_type: "halfcourt",
         end_reason: "",
         n_actions: allRows.length,
-        start_action: firstRow._actionNumber,
+        start_action: cluster.actionNumber,
         end_action: cluster.actionNumber,
         start_reason: startReason,
         _rows: [...allRows],
@@ -884,16 +900,21 @@
       const possessions = [];
       let current = null;
       let pendingRows = [];
+      let carryTeam = null;
 
       clusters.forEach((cluster) => {
         const action = cluster.primary._actionType;
         const subtype = cluster.primary._subType;
-        const clusterTeam = possessionTeamForCluster(cluster, context, current ? current.offense_team_id : null);
+        let clusterTeam = possessionTeamForCluster(cluster, context, current ? current.offense_team_id : null);
+        if (!current && action === "Jump Ball" && carryTeam) {
+          clusterTeam = carryTeam;
+        }
 
         if (current && current._endCandidate && clusterTeam) {
           if (clusterTeam !== current.offense_team_id && isLiveOffensiveCluster(cluster)) {
             finalizePossession(current, possessions);
             current = null;
+            carryTeam = clusterTeam;
           } else if (clusterTeam === current.offense_team_id && isLiveOffensiveCluster(cluster)) {
             current._endCandidate = null;
           }
@@ -904,6 +925,7 @@
             finalizePossession(current, possessions, "period_start");
             current = null;
           }
+          carryTeam = null;
           pendingRows = [...cluster.rows];
           return;
         }
@@ -918,6 +940,7 @@
             }
             current = null;
           }
+          carryTeam = null;
           pendingRows = [];
           return;
         }
@@ -940,6 +963,7 @@
 
           const startReason = action === "Jump Ball" ? "jump_ball" : action.toLowerCase().replace(/\s+/g, "_");
           current = startPossession(possessions, clusterTeam, cluster, context, pendingRows, startReason);
+          carryTeam = null;
           pendingRows = [];
         } else {
           appendCluster(current, cluster);
@@ -957,14 +981,17 @@
             } else {
               finalizePossession(current, possessions, "def_rebound", cluster.clockSeconds, cluster.actionNumber);
               current = null;
+              carryTeam = team;
             }
           }
         } else if (action === "Made Shot") {
           current._lastMissTeam = null;
           markCandidate(current, cluster, "made_fg");
         } else if (action === "Turnover") {
+          const nextTeam = opponent(current.offense_team_id, context);
           finalizePossession(current, possessions, "turnover", cluster.clockSeconds, cluster.actionNumber);
           current = null;
+          carryTeam = nextTeam;
         } else if (action === "Free Throw") {
           const freeThrow = parseFreeThrowSubtype(subtype);
           const isLast = freeThrow.total == null || freeThrow.attempt === freeThrow.total;
