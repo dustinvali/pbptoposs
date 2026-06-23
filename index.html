@@ -872,7 +872,8 @@
       possession._endCandidate = {
         reason,
         clock: cluster.clockSeconds,
-        action: cluster.actionNumber
+        action: cluster.actionNumber,
+        nActions: possession.n_actions
       };
     }
 
@@ -881,6 +882,9 @@
       possession.end_reason = reason || candidate.reason || "unknown";
       possession.end_clock = clock == null ? (candidate.clock ?? possession.end_clock) : clock;
       possession.end_action = action == null ? (candidate.action ?? possession.end_action) : action;
+      if (!reason && candidate.nActions != null) {
+        possession.n_actions = candidate.nActions;
+      }
 
       const elapsed = (possession.start_clock || 0) - (possession.end_clock || 0);
       if (["steal", "def_rebound"].includes(possession.start_reason) && elapsed >= 0 && elapsed <= 8 && ["made_fg", "free_throw"].includes(possession.end_reason)) {
